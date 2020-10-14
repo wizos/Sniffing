@@ -1,20 +1,22 @@
 package com.fanchen.sniffing.x5;
 
 import android.app.Activity;
+import android.view.Display;
+import android.view.View;
 import android.view.ViewGroup;
 
-import com.fanchen.sniffing.DefaultFilter;
-import com.fanchen.sniffing.SniffingCallback;
-import com.fanchen.sniffing.SniffingFilter;
+import com.fanchen.sniffing.*;
 import com.tencent.smtt.sdk.WebView;
 
 import java.lang.ref.SoftReference;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
-public class SniffingUtil {
+public class SniffingUtil implements SniffingUICallback {
 
     private static SniffingUtil mSniffingUtil;
+    public static boolean WEB_VIEW_DEBUG = false;
 
     private WebView mWebView;
 
@@ -25,7 +27,9 @@ public class SniffingUtil {
     private SoftReference<Activity> mActivity;
     private SniffingFilter mFilter = new DefaultFilter();
     private long mConnTimeOut = 20 * 1000;
+    private boolean mAutoRelease = false;
     private long mReadTimeOut = 45 * 1000;
+    private long mFinishedTimeOut = 800;
     private SniffingWebViewClient mClient = null;
 
     private SniffingUtil() {
@@ -42,6 +46,11 @@ public class SniffingUtil {
         return mSniffingUtil;
     }
 
+    public SniffingUtil autoRelease(boolean mAutoRelease) {
+        this.mAutoRelease = mAutoRelease;
+        return this;
+    }
+
     public synchronized void releaseWebView() {
         try {
             if (mWebView != null) {
@@ -56,6 +65,11 @@ public class SniffingUtil {
         } catch (Exception e) {
             e.printStackTrace();
         }
+    }
+
+    public synchronized SniffingUtil setFinishedTimeOut(long mFinishedTimeOut) {
+        this.mFinishedTimeOut = mFinishedTimeOut;
+        return this;
     }
 
     public synchronized void release() {
@@ -81,7 +95,9 @@ public class SniffingUtil {
     public synchronized void start() {
         try {
             if (mActivity == null) {
-                if (mCallback != null) {
+                if(mAutoRelease){
+                    onSniffingError(mWebView, mUrl, -1);
+                }else if (mCallback != null) {
                     mCallback.onSniffingError(mWebView, mUrl, -1);
                 }
                 return;
@@ -96,9 +112,11 @@ public class SniffingUtil {
             }
             if (mCallbackChange && mWebView != null) {
                 mCallbackChange = false;
-                mClient = new SniffingWebViewClient(mWebView, mUrl, mHeader, mFilter, mCallback);
+                SniffingCallback callback = mAutoRelease ? this : mCallback;
+                mClient = new SniffingWebViewClient(mWebView, mUrl, mHeader, mFilter, callback);
                 mClient.setReadTimeOut(mReadTimeOut);
                 mClient.setConnTimeOut(mConnTimeOut);
+                mClient.setFinishedTimeOut(mFinishedTimeOut);
                 SniffingWebChromeClient chromeClient = new SniffingWebChromeClient(mClient);
                 mWebView.setWebViewClient(mClient);
                 mWebView.setWebChromeClient(chromeClient);
@@ -106,18 +124,27 @@ public class SniffingUtil {
             if (mWebView != null && activity != null) {
                 if (mWebView.getParent() == null) {
                     ViewGroup mainView = (ViewGroup) activity.findViewById(android.R.id.content);
-                    mWebView.setLayoutParams(new ViewGroup.LayoutParams(1, 1));
+                    if(WEB_VIEW_DEBUG){
+                        Display display = activity.getWindowManager().getDefaultDisplay();
+                        mWebView.setLayoutParams(new ViewGroup.LayoutParams(display.getWidth() / 2, display.getHeight() / 2));
+                    }else{
+                        mWebView.setLayoutParams(new ViewGroup.LayoutParams(1, 1));
+                    }
                     mainView.addView(mWebView);
                 }
                 mWebView.loadUrl(mUrl, mHeader);
             } else {
-                if (mCallback != null) {
+                if(mAutoRelease){
+                    onSniffingError(mWebView, mUrl, -1);
+                }else if (mCallback != null) {
                     mCallback.onSniffingError(mWebView, mUrl, -1);
                 }
             }
         } catch (Exception e) {
             e.printStackTrace();
-            if (mCallback != null) {
+            if(mAutoRelease){
+                onSniffingError(mWebView, mUrl, -1);
+            }else if (mCallback != null) {
                 mCallback.onSniffingError(mWebView, mUrl, -1);
             }
         }
@@ -162,5 +189,34 @@ public class SniffingUtil {
         if (mClient != null)
             mClient.setReadTimeOut(readTimeOut);
         return this;
+    }
+
+    @Override
+    public void onSniffingSuccess(View webView, String url, List<SniffingVideo> videos) {
+        if (mCallback != null) {
+            mCallback.onSniffingSuccess(webView, url, videos);
+        }
+    }
+
+    @Override
+    public void onSniffingError(View webView, String url, int errorCode) {
+        if (mCallback != null) {
+            mCallback.onSniffingError(webView, url, errorCode);
+        }
+    }
+
+    @Override
+    public void onSniffingStart(View webView, String url) {
+        if (mCallback instanceof SniffingUICallback) {
+            ((SniffingUICallback)mCallback).onSniffingStart(webView, url);
+        }
+    }
+
+    @Override
+    public void onSniffingFinish(View webView, String url) {
+        if (mCallback instanceof SniffingUICallback) {
+            ((SniffingUICallback)mCallback).onSniffingFinish(webView, url);
+        }
+        releaseAll();
     }
 }
